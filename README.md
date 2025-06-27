@@ -23,58 +23,68 @@
     pip install -r requirements.txt
     ```
 
-## Usage
+## Quickstart
 
 Here’s an example:
 
 ```python
-from smartimpute import Generator, Discriminator, WGAIN, normalize_data, split_data
-
-# Load raw data
-raw_data = pd.read_csv("../data/sample_data.csv")
-gene_names = raw_data.columns.tolist()
-data = raw_data.values
-
-# Define target genes
-target_genes = ["GeneA", "GeneB", "GeneC", "GeneX"]  # Assume "GeneX" is not in the dataset
-
-# Transform data: target genes first
-data, new_gene_order, common_target_genes = data_transformer(data, gene_names, target_genes)
-print("New Gene Order:", new_gene_order)
-print("Common Target Genes:", common_target_genes)
-
-# Normalize data
-data = normalize_data(data)
-
-# Split data
-train_data, test_data = split_data(data)
-
-# Parameters
-q = len(common_target_genes)  # Automatically set q to the number of common target genes
-gamma = 0.5  # Fraction of non-target genes to include during training
-
-# Initialize WGAIN
-generator = Generator(input_dim=data.shape[1], hidden_dim=128)
-discriminator = Discriminator(input_dim=data.shape[1], hidden_dim=128)
-wgain = WGAIN(
-    data=train_data,
-    generator=generator,
-    discriminator=discriminator,
-    batch_size=64,
-    hint_rate=0.9,
-    alpha=100,
-    beta=10,
-    gamma=gamma,
-    lambda_gp=10,
-    q=q,
-    epochs=10,  # Set a small number of epochs for quick testing
+import pandas as pd
+from smartimpute import (
+    normalize_data,
+    split_data,
+    data_transformer,
+    Generator,
+    Discriminator,
+    train_smart,
 )
 
-# Train and impute
-wgain.train()
-imputed_data, zero_probs = wgain.impute(test_data)
-print("Imputed Data for Target Genes:")
-print(imputed_data)
-print("Biological Zero Probabilities for Target Genes:")
-print(zero_probs)
+# 1) Load & rearrange
+raw = pd.read_csv("examples/sample_data.csv", index_col=0)
+data = raw.values              # shape [cells × genes]
+genes = raw.columns.tolist()
+
+target_genes = ["GeneA", "GeneB", "GeneC", "GeneX"]
+X, gene_order, common_targets = data_transformer(data, genes, target_genes)
+
+# 2) Normalize & split
+X_norm = normalize_data(X)
+train, test = split_data(X_norm, test_frac=0.2)
+
+# 3) Build masks
+#    M: 1 if observed >0, else 0  
+#    F: here we simulate forced‐drop on train only
+import numpy as np
+M = (train > 0).astype(np.float32)
+F = np.random.binomial(1, 0.1, size=M.shape).astype(np.float32) * (M==1)
+
+# 4) To torch tensors
+import torch
+X_t = torch.tensor(train, dtype=torch.float32)
+M_t = torch.tensor(M,     dtype=torch.float32)
+F_t = torch.tensor(F,     dtype=torch.float32)
+
+# 5) Train!
+#    you can swap recon_loss="mse" | "poisson"
+generator, history = train_smart(
+    X_t, M_t, F_t,
+    recon_loss="mse",
+    hint_rate=0.9,
+    hint2_rate=0.6,
+    alpha=100,
+    l1_lambda=1.0,
+    beta=5.0,
+    curriculum=50,
+    epochs=100
+)
+
+# 6) Impute & extract probabilities
+with torch.no_grad():
+    Z = torch.rand_like(X_t)
+    mu = generator(X_t * M_t + (1-M_t)*Z, M_t)
+    imputed = (M_t * X_t + (1-M_t) * mu).cpu().numpy()
+
+# 7) Zero‐scores: fraction of imputed values below threshold
+zero_scores = (mu.cpu().numpy() < 0.2).astype(float)
+
+print("Completed! Imputed data shape:", imputed.shape)
 ```
