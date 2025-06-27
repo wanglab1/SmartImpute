@@ -1,25 +1,14 @@
 from .generator import Generator
-from .discriminator import Discriminator
-from .train import train_smart_wgan
-from .utils import (
-    recon_loss_fn,
-    recon_loss_mse,
-    recon_loss_poisson,
-    recon_loss_nb,
-    recon_loss_zinb,
-    gradient_penalty,
-)
+from .discriminator import D1_WGAN_GP, D2_BCE
+from .utils         import gradient_penalty, recon_loss_fn
+from .smartimpute   import train_smartimpute
 
 __all__ = [
     "Generator",
-    "Discriminator",
-    "train_smart_wgan",
-    "recon_loss_fn",
-    "recon_loss_mse",
-    "recon_loss_poisson",
-    "recon_loss_nb",
-    "recon_loss_zinb",
+    "D1_WGAN_GP",
+    "D2_BCE",
     "gradient_penalty",
+    "recon_loss_fn",
+    "train_smartimpute",
 ]
-
 
