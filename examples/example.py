@@ -1,50 +1,57 @@
-from smartimpute import Generator, Discriminator, WGAIN, normalize_data, split_data, data_transformer
+# examples/example.py
+
 import pandas as pd
+import numpy as np
+import torch
 
-# Load raw data
-raw_data = pd.read_csv("../data/sample_data.csv")
-gene_names = raw_data.columns.tolist()
-data = raw_data.values
+from smartimpute import train_smartimpute, Generator, D1_WGAN_GP
 
-# Define target genes
-target_genes = ["GeneA", "GeneB", "GeneC", "GeneX"]  # Assume "GeneX" is not in the dataset
+# 1) Load & normalize
 
-# Transform data: target genes first
-data, new_gene_order, common_target_genes = data_transformer(data, gene_names, target_genes)
-print("New Gene Order:", new_gene_order)
-print("Common Target Genes:", common_target_genes)
+raw = pd.read_csv("data/sample_data.csv", index_col=0)
+# per-cell (row) total‐count normalize to 10⁴, then log1p
+counts = raw.values
+normed = counts / counts.sum(axis=1, keepdims=True) * 1e4
+log1p  = np.log1p(normed)
 
-# Normalize data
-data = normalize_data(data)
+# 2) Subset to target genes (if present)
 
-# Split data
-train_data, test_data = split_data(data)
+target_genes = ["GeneA", "GeneB", "GeneC", "GeneX"]
+present      = [g for g in target_genes if g in raw.columns]
+if not present:
+    raise ValueError("None of your target_genes are in the data!")
+log1p_df = pd.DataFrame(log1p, index=raw.index, columns=raw.columns)[present]
 
-# Parameters
-q = len(common_target_genes)  # Automatically set q to the number of common target genes
-gamma = 0.5  # Fraction of non-target genes to include during training
+# 3) Build PyTorch tensors & masks
 
-# Initialize WGAIN
-generator = Generator(input_dim=data.shape[1], hidden_dim=128)
-discriminator = Discriminator(input_dim=data.shape[1], hidden_dim=128)
-wgain = WGAIN(
-    data=train_data,
-    generator=generator,
-    discriminator=discriminator,
+X_np = log1p_df.values.astype(np.float32)
+# M = 1 if observed (>0), 0 if true zero
+M_np = (X_np > 0).astype(np.float32)
+# F_mask all zeros here (real data → no “forced zeros” known)
+F_np = np.zeros_like(M_np, dtype=np.float32)
+
+X_t = torch.tensor(X_np, dtype=torch.float32)
+M_t = torch.tensor(M_np, dtype=torch.float32)
+F_t = torch.tensor(F_np, dtype=torch.float32)
+
+# 4) Train
+
+# you can also import hyperparameters from your config
+G_model, history, imputed = train_smartimpute(
+    X_t, M_t, F_mask=F_t,
+    recon_loss="mse",     # or "poisson"
+    epochs=100,
     batch_size=64,
-    hint_rate=0.9,
-    alpha=100,
-    beta=10,
-    gamma=gamma,
-    lambda_gp=10,
-    q=q,
-    epochs=10,  # Set a small number of epochs for quick testing
 )
 
-# Train and impute
-wgain.train()
-imputed_data, zero_probs = wgain.impute(test_data)
-print("Imputed Data for Target Genes:")
-print(imputed_data)
-print("Biological Zero Probabilities for Target Genes:")
-print(zero_probs)
+
+# 5) Save imputed DataFrame
+
+imputed_df = pd.DataFrame(
+    imputed, 
+    index=log1p_df.index, 
+    columns=log1p_df.columns
+)
+imputed_df.to_csv("examples/imputed_sample_data.csv")
+print("Wrote examples/imputed_sample_data.csv")
+
