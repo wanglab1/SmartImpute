@@ -17,7 +17,7 @@ def train_smartimpute(
     l1_lambda=1.0,
     beta=5.0,
     curriculum=50,
-    eps_zero=1e-2,
+    eps_zero=0.2,
     gp_weight=10.0,
     recon_loss="mse",
     device=None
